@@ -670,16 +670,16 @@ impl<'a> QwikTransform<'a> {
 					}
 					if invalid_decl.iter().any(|entry| entry.0 == *id) {
 						HANDLER.with(|handler| {
-                            handler
-                                .struct_err_with_code(
-                                    &format!(
-                                        "Reference to identifier '{}' can not be used inside a Qrl($) scope because it's a function",
-                                        id.0
-                                    ),
-                                    errors::get_diagnostic_id(errors::Error::FunctionReference),
-                                )
-                                .emit();
-                        });
+							handler
+								.struct_err_with_code(
+									&format!(
+										"Reference to identifier '{}' can not be used inside a Qrl($) scope because it's a function",
+										id.0
+									),
+									errors::get_diagnostic_id(errors::Error::FunctionReference),
+								)
+								.emit();
+						});
 					}
 				}
 			}
@@ -748,16 +748,12 @@ impl<'a> QwikTransform<'a> {
 	) -> ast::CallExpr {
 		let canonical_filename = get_canonical_filename(&symbol_name);
 
-		let entry = self
-			.options
-			.entry_policy
-			.get_entry_for_sym(
-				&hook_data.hash,
-				self.options.path_data,
-				&self.stack_ctxt,
-				&hook_data,
-			)
-			.map(|entry| JsWord::from(escape_sym(entry.as_ref())));
+		let entry = self.options.entry_policy.get_entry_for_sym(
+			&hook_data.hash,
+			self.options.path_data,
+			&self.stack_ctxt,
+			&hook_data,
+		);
 
 		let mut filename = format!(
 			"./{}",
@@ -795,16 +791,20 @@ impl<'a> QwikTransform<'a> {
 		o
 	}
 
+	fn stack_ctxt_push(&mut self, name: String) {
+		self.stack_ctxt.push(escape_sym(&name));
+	}
+
 	fn handle_jsx(&mut self, mut node: ast::CallExpr) -> ast::CallExpr {
 		let node_type = node.args.remove(0);
 		let node_props = node.args.remove(0);
 		let (name_token, is_fn, is_text_only) = match &*node_type.expr {
 			ast::Expr::Lit(ast::Lit::Str(str)) => {
-				self.stack_ctxt.push(str.value.to_string());
+				self.stack_ctxt_push(str.value.to_string());
 				(true, false, is_text_only(&str.value))
 			}
 			ast::Expr::Ident(ident) => {
-				self.stack_ctxt.push(ident.sym.to_string());
+				self.stack_ctxt_push(ident.sym.to_string());
 				if !self.immutable_function_cmp.contains(&id!(ident)) {
 					self.jsx_mutable = true;
 				}
@@ -1118,14 +1118,14 @@ impl<'a> QwikTransform<'a> {
 			}
 		}
 		HANDLER.with(|handler| {
-            handler
-                .struct_span_err_with_code(
-                    node.span,
-                    "Dynamic import() inside Qrl($) scope is not a string, relative paths might break",
-                    errors::get_diagnostic_id(errors::Error::DynamicImportInsideQhook),
-                )
-                .emit();
-        });
+			handler
+				.struct_span_err_with_code(
+					node.span,
+					"Dynamic import() inside Qrl($) scope is not a string, relative paths might break",
+					errors::get_diagnostic_id(errors::Error::DynamicImportInsideQhook),
+				)
+				.emit();
+		});
 		node
 	}
 
@@ -1255,7 +1255,7 @@ impl<'a> QwikTransform<'a> {
 							if let Some(key_word) = key_word {
 								let is_children = key_word == *CHILDREN;
 								if !is_children {
-									self.stack_ctxt.push(key_word.to_string());
+									self.stack_ctxt_push(key_word.to_string());
 									name_token = true;
 								}
 								if is_children {
@@ -1796,7 +1796,7 @@ impl<'a> Fold for QwikTransform<'a> {
 	fn fold_var_declarator(&mut self, node: ast::VarDeclarator) -> ast::VarDeclarator {
 		let mut stacked = false;
 		if let ast::Pat::Ident(ref ident) = node.name {
-			self.stack_ctxt.push(ident.id.sym.to_string());
+			self.stack_ctxt_push(ident.id.sym.to_string());
 			stacked = true;
 		}
 		let o = node.fold_children_with(self);
@@ -1810,7 +1810,7 @@ impl<'a> Fold for QwikTransform<'a> {
 		if let Some(current_scope) = self.decl_stack.last_mut() {
 			current_scope.push((id!(node.ident), IdentType::Fn));
 		}
-		self.stack_ctxt.push(node.ident.sym.to_string());
+		self.stack_ctxt_push(node.ident.sym.to_string());
 
 		let o = node.fold_children_with(self);
 		self.stack_ctxt.pop();
@@ -2024,7 +2024,7 @@ impl<'a> Fold for QwikTransform<'a> {
 			current_scope.push((id!(node.ident), IdentType::Class));
 		}
 
-		self.stack_ctxt.push(node.ident.sym.to_string());
+		self.stack_ctxt_push(node.ident.sym.to_string());
 		self.decl_stack.push(vec![]);
 		let prev = self.root_jsx_mode;
 		self.root_jsx_mode = true;
@@ -2041,7 +2041,7 @@ impl<'a> Fold for QwikTransform<'a> {
 		let mut stacked = false;
 
 		if let ast::JSXElementName::Ident(ref ident) = node.opening.name {
-			self.stack_ctxt.push(ident.sym.to_string());
+			self.stack_ctxt_push(ident.sym.to_string());
 			stacked = true;
 		}
 		let o = node.fold_children_with(self);
@@ -2064,7 +2064,7 @@ impl<'a> Fold for QwikTransform<'a> {
 				filename = foldername.to_string();
 			}
 		}
-		self.stack_ctxt.push(filename);
+		self.stack_ctxt_push(filename);
 		let o = node.fold_children_with(self);
 		self.stack_ctxt.pop();
 
@@ -2075,7 +2075,7 @@ impl<'a> Fold for QwikTransform<'a> {
 		let node = match node.name {
 			ast::JSXAttrName::Ident(ref ident) => {
 				let new_word = convert_signal_word(&ident.sym);
-				self.stack_ctxt.push(ident.sym.to_string());
+				self.stack_ctxt_push(ident.sym.to_string());
 
 				if new_word.is_some() {
 					ast::JSXAttr {
@@ -2094,7 +2094,7 @@ impl<'a> Fold for QwikTransform<'a> {
 					namespaced.name.sym.as_ref(),
 				]
 				.concat();
-				self.stack_ctxt.push(ident_name.clone());
+				self.stack_ctxt_push(ident_name.clone());
 				if new_word.is_some() {
 					ast::JSXAttr {
 						value: self.handle_jsx_value(JsWord::from(ident_name), node.value),
@@ -2135,7 +2135,8 @@ impl<'a> Fold for QwikTransform<'a> {
 				} else if id_eq!(ident, &self.inlined_qrl_fn) {
 					return self.handle_inlined_qhook(node);
 				} else if let Some(specifier) = self.marker_functions.get(&id!(ident)) {
-					self.stack_ctxt.push(ident.sym.to_string());
+					// we can't use _push because of mutable borrow inside borrow
+					self.stack_ctxt.push(escape_sym(&ident.sym.to_string()));
 					ctx_name = specifier.clone();
 					name_token = true;
 
@@ -2155,28 +2156,28 @@ impl<'a> Fold for QwikTransform<'a> {
 						let new_specifier =
 							convert_signal_word(&ident.sym).expect("Specifier ends with $");
 						global_collect
-                            .exports
-                            .keys()
-                            .find(|id| id.0 == new_specifier)
-                            .map_or_else(
-                                || {
-                                    HANDLER.with(|handler| {
-                                        handler
-                                            .struct_span_err_with_code(
-                                                ident.span,
-                                                &format!("Found '{}' but did not find the corresponding '{}' exported in the same file. Please check that it is exported and spelled correctly", &ident.sym, &new_specifier),
-                                                errors::get_diagnostic_id(errors::Error::MissingQrlImplementation),
-                                            )
-                                            .emit();
-                                    });
-                                },
-                                |new_local| {
-                                    replace_callee = Some(new_ident_from_id(new_local).as_callee());
-                                },
-                            );
+							.exports
+							.keys()
+							.find(|id| id.0 == new_specifier)
+							.map_or_else(
+								|| {
+									HANDLER.with(|handler| {
+										handler
+											.struct_span_err_with_code(
+												ident.span,
+												&format!("Found '{}' but did not find the corresponding '{}' exported in the same file. Please check that it is exported and spelled correctly", &ident.sym, &new_specifier),
+												errors::get_diagnostic_id(errors::Error::MissingQrlImplementation),
+										)
+											.emit();
+									});
+								},
+								|new_local| {
+									replace_callee = Some(new_ident_from_id(new_local).as_callee());
+								},
+							);
 					}
 				} else {
-					self.stack_ctxt.push(ident.sym.to_string());
+					self.stack_ctxt_push(ident.sym.to_string());
 					name_token = true;
 				}
 			}
